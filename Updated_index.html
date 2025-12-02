@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Drone HUD · rPPG Prototype</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(circle at top, rgba(56,189,248,0.16), transparent 60%),
+        radial-gradient(circle at bottom, rgba(37,99,235,0.18), transparent 60%),
+        #020617;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #e5f4ff;
+    }
+
+    /* outer shell */
+    #hud-shell {
+      width: 100%;
+      max-width: 420px;
+      margin: 16px;
+      border-radius: 20px;
+      background: #020617;
+      box-shadow:
+        0 0 0 1px rgba(15,23,42,1),
+        0 18px 40px rgba(0,0,0,0.9);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* blueprint grid */
+    #hud-shell::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(15,118,178,0.18) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(15,118,178,0.18) 1px, transparent 1px);
+      background-size: 24px 24px;
+      opacity: 0.35;
+      pointer-events: none;
+    }
+
+    #hud-inner {
+      position: relative;
+      z-index: 1;
+      padding: 10px 12px 12px;
+    }
+
+    /* top bar, minimal */
+    #top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 0.6rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: #60a5fa;
+    }
+    #top-left,
+    #top-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .tiny-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      border: 1px solid #60a5fa;
+      box-shadow: 0 0 6px rgba(56,189,248,0.8);
+    }
+
+    /* main layout */
+    #main {
+      display: grid;
+      grid-template-columns: 1.25fr 0.75fr;
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    /* video frame with angular outline */
+    #video-frame {
+      position: relative;
+      border-radius: 14px;
+      padding: 6px;
+      background: radial-gradient(circle at center, rgba(15,23,42,1), rgba(15,23,42,0.96));
+      box-shadow: inset 0 0 0 1px rgba(37,99,235,0.7);
+    }
+
+    #video-frame::before,
+    #video-frame::after {
+      content: "";
+      position: absolute;
+      inset: 4px;
+      border: 1px solid rgba(56,189,248,0.4);
+      clip-path: polygon(
+        8% 0%,
+        100% 0%,
+        100% 80%,
+        92% 100%,
+        0% 100%,
+        0% 20%
+      );
+      opacity: 0.7;
+      pointer-events: none;
+    }
+
+    #video-frame::after {
+      inset: 8px;
+      border-color: rgba(8,47,73,0.8);
+      opacity: 0.6;
+    }
+
+    #video-container {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4/3;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #020617;
+      box-shadow: 0 0 0 1px rgba(15,23,42,0.9);
+    }
+
+    video,
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    #overlay {
+      pointer-events: none;
+    }
+
+    /* side stack: HR + signal bar */
+    #side-stack {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 0.7rem;
+    }
+
+    #hr-card {
+      border-radius: 12px;
+      padding: 8px 8px 6px;
+      background: radial-gradient(circle at top, rgba(15,23,42,0.9), rgba(15,23,42,1));
+      box-shadow: inset 0 0 0 1px rgba(56,189,248,0.6);
+    }
+
+    #hr-label {
+      font-size: 0.6rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #60a5fa;
+      margin-bottom: 4px;
+    }
+
+    #hr-value {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: #e5f4ff;
+    }
+
+    #signal-card {
+      border-radius: 12px;
+      padding: 6px 8px 8px;
+      background: radial-gradient(circle at bottom, rgba(15,23,42,0.86), rgba(15,23,42,1));
+      box-shadow: inset 0 0 0 1px rgba(30,64,175,0.8);
+    }
+
+    #sig-label {
+      font-size: 0.6rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #93c5fd;
+      margin-bottom: 4px;
+    }
+
+    #sig-bar-shell {
+      position: relative;
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(15,23,42,0.9);
+      overflow: hidden;
+      box-shadow: inset 0 0 0 1px rgba(30,64,175,1);
+    }
+
+    #sig-bar {
+      position: absolute;
+      inset: 0;
+      width: 10%;
+      background: linear-gradient(90deg, #0ea5e9, #22c55e);
+      box-shadow: 0 0 12px rgba(34,197,94,0.8);
+      transition: width 0.4s ease-out;
+    }
+
+    /* bottom strip */
+    #bottom {
+      margin-top: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.58rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #64748b;
+    }
+
+    #arm-btn {
+      padding: 6px 16px;
+      border-radius: 999px;
+      border: 1px solid rgba(56,189,248,0.9);
+      background: radial-gradient(circle at center, rgba(10,37,64,0.9), rgba(15,23,42,0.98));
+      color: #e0f2fe;
+      font-size: 0.6rem;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      cursor: pointer;
+      box-shadow: 0 0 16px rgba(56,189,248,0.5);
+      white-space: nowrap;
+    }
+
+    #arm-btn:disabled {
+      opacity: 0.4;
+      box-shadow: none;
+      cursor: default;
+    }
+
+    #status-mini {
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 480px) {
+      #main {
+        grid-template-columns: 1fr;
+      }
+      #bottom {
+        flex-direction: row;
+        justify-content: space-between;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="hud-shell">
+    <div id="hud-inner">
+      <div id="top-bar">
+        <div id="top-left">
+          <div class="tiny-dot"></div>
+          <span>HUD · V1</span>
+        </div>
+        <div id="top-right">
+          <span>FACE · RPPG</span>
+        </div>
+      </div>
+
+      <div id="main">
+        <div id="video-frame">
+          <div id="video-container">
+            <video id="video" playsinline muted></video>
+            <canvas id="overlay"></canvas>
+          </div>
+        </div>
+
+        <div id="side-stack">
+          <div id="hr-card">
+            <div id="hr-label">HR</div>
+            <div id="hr-value">--</div>
+          </div>
+          <div id="signal-card">
+            <div id="sig-label">SIG</div>
+            <div id="sig-bar-shell">
+              <div id="sig-bar"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="bottom">
+        <button id="arm-btn">ARM</button>
+        <div id="status-mini">IDLE</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const armBtn = document.getElementById('arm-btn');
+    const hrValueEl = document.getElementById('hr-value');
+    const sigBar = document.getElementById('sig-bar');
+    const statusMini = document.getElementById('status-mini');
+    const octx = overlay.getContext('2d');
+
+    const fs = 30;
+    const windowSec = 10;
+    const bufferLength = fs * windowSec;
+
+    let signal = [];
+    let running = false;
+    let lastSampleTime = 0;
+
+    // Face detection state
+    const faceDetector = ('FaceDetector' in window) ? new FaceDetector({ fastMode: true, maxDetectedFaces: 1 }) : null;
+    let lastFaceBox = null;
+    let lastFaceTime = 0;
+
+    // BPM smoothing
+    const bpmHistory = [];
+    const maxBpmHistory = 5;
+
+    function clamp(val, min, max) {
+      return Math.max(min, Math.min(max, val));
+    }
+
+    function computeROIFromFace(w, h) {
+      if (!lastFaceBox) return null;
+      const ageMs = performance.now() - lastFaceTime;
+      if (ageMs > 2000) return null; // stale
+
+      const box = lastFaceBox;
+      let fx = box.x;
+      let fy = box.y;
+      let fw = box.width;
+      let fh = box.height;
+
+      // Forehead region: top portion of face box
+      let roiW = fw * 0.5;
+      let roiH = fh * 0.25;
+      let x = fx + (fw - roiW) / 2;
+      let y = fy + fh * 0.05;
+
+      // Clamp to frame
+      x = clamp(x, 0, w - 1);
+      y = clamp(y, 0, h - 1);
+      roiW = clamp(roiW, 10, w - x);
+      roiH = clamp(roiH, 10, h - y);
+
+      // Integers for getImageData
+      return {
+        x: Math.round(x),
+        y: Math.round(y),
+        w: Math.round(roiW),
+        h: Math.round(roiH)
+      };
+    }
+
+    function computeFallbackROI(w, h) {
+      const roiW = w * 0.38;
+      const roiH = h * 0.24;
+      let x = (w - roiW) / 2;
+      let y = h * 0.18;
+      return {
+        x: Math.round(clamp(x, 0, w - 1)),
+        y: Math.round(clamp(y, 0, h - 1)),
+        w: Math.round(clamp(roiW, 10, w - x)),
+        h: Math.round(clamp(roiH, 10, h - y))
+      };
+    }
+
+    function getROI(w, h) {
+      const faceROI = computeROIFromFace(w, h);
+      return faceROI || computeFallbackROI(w, h);
+    }
+
+    function drawHeartOverlay(roi) {
+      octx.clearRect(0, 0, overlay.width, overlay.height);
+
+      const cx = roi.x + roi.w / 2;
+      const cy = roi.y + roi.h / 2;
+
+      // subtle dashed rectangle
+      octx.strokeStyle = 'rgba(56,189,248,0.75)';
+      octx.lineWidth = 1.5;
+      octx.setLineDash([6, 4]);
+      octx.strokeRect(roi.x, roi.y, roi.w, roi.h);
+      octx.setLineDash([]);
+
+      // glowing heart in center of ROI
+      octx.save();
+      octx.font = '24px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      octx.textAlign = 'center';
+      octx.textBaseline = 'middle';
+      octx.fillStyle = '#38bdf8';
+      octx.shadowColor = 'rgba(56,189,248,0.9)';
+      octx.shadowBlur = 10;
+      octx.fillText('♥', cx, cy);
+      octx.restore();
+    }
+
+    function extractGreenMean(roi) {
+      const c = document.createElement('canvas');
+      c.width = video.videoWidth || 320;
+      c.height = video.videoHeight || 240;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(video, 0, 0, c.width, c.height);
+      const img = ctx.getImageData(roi.x, roi.y, roi.w, roi.h);
+      const data = img.data;
+      let sum = 0;
+      let count = data.length / 4;
+      for (let i = 0; i < data.length; i += 4) {
+        sum += data[i + 1];
+      }
+      return sum / count;
+    }
+
+    function detrend(data) {
+      const mean = data.reduce((a, b) => a + b, 0) / data.length;
+      return data.map(v => v - mean);
+    }
+
+    function bandpass(data, lowWin, highWin) {
+      function movingAvg(arr, win) {
+        const out = new Array(arr.length);
+        let sum = 0;
+        for (let i = 0; i < arr.length; i++) {
+          sum += arr[i];
+          if (i >= win) sum -= arr[i - win];
+          out[i] = sum / Math.min(i + 1, win);
+        }
+        return out;
+      }
+      const maLong = movingAvg(data, highWin);
+      const hp = data.map((v, i) => v - maLong[i]);
+      return movingAvg(hp, lowWin);
+    }
+
+    function naiveFFT(real) {
+      const N = real.length;
+      const re = new Array(N).fill(0);
+      const im = new Array(N).fill(0);
+      for (let k = 0; k < N; k++) {
+        let sumRe = 0, sumIm = 0;
+        for (let n = 0; n < N; n++) {
+          const phi = (2 * Math.PI * k * n) / N;
+          sumRe += real[n] * Math.cos(phi);
+          sumIm -= real[n] * Math.sin(phi);
+        }
+        re[k] = sumRe;
+        im[k] = sumIm;
+      }
+      return { re, im };
+    }
+
+    function estimateBPMAndQuality(sig) {
+      if (sig.length < bufferLength * 0.7) return { bpm: null, qual: 0 };
+
+      let x = detrend(sig);
+      x = bandpass(x, 4, Math.round(fs * 1.5));
+
+      const N = x.length;
+      const win = x.map((v, n) => v * (0.5 - 0.5 * Math.cos((2 * Math.PI * n) / (N - 1))));
+      const { re, im } = naiveFFT(win);
+
+      let peakFreq = null;
+      let peakMag = -Infinity;
+      let bandPower = 0;
+
+      for (let k = 1; k < N / 2; k++) {
+        const f = k * fs / N;
+        const mag = Math.sqrt(re[k] * re[k] + im[k] * im[k]);
+        if (f >= 0.7 && f <= 3.0) {
+          bandPower += mag;
+          if (mag > peakMag) {
+            peakMag = mag;
+            peakFreq = f;
+          }
+        }
+      }
+
+      if (!peakFreq || peakMag <= 0 || bandPower <= 0) {
+        return { bpm: null, qual: 0 };
+      }
+
+      const bpm = peakFreq * 60;
+      const qual = Math.max(0, Math.min(1, peakMag / (bandPower * 0.7)));
+
+      return { bpm, qual };
+    }
+
+    function updateBpmDisplay(bpm, qual) {
+      if (!bpm || bpm <= 30 || bpm >= 220 || qual < 0.3) {
+        hrValueEl.textContent = '--';
+        sigBar.style.width = '10%';
+        statusMini.textContent = 'SCAN';
+        return;
+      }
+
+      bpmHistory.push(bpm);
+      if (bpmHistory.length > maxBpmHistory) bpmHistory.shift();
+      const avgBpm = bpmHistory.reduce((a, b) => a + b, 0) / bpmHistory.length;
+
+      hrValueEl.textContent = avgBpm.toFixed(0);
+      const widthPct = 10 + Math.round(qual * 90);
+      sigBar.style.width = widthPct + '%';
+      statusMini.textContent = 'LOCK';
+    }
+
+    async function faceDetectionLoop() {
+      if (!faceDetector) return;
+      while (running) {
+        try {
+          if (video.readyState >= 2) {
+            const faces = await faceDetector.detect(video);
+            if (faces && faces.length > 0) {
+              const box = faces[0].boundingBox || faces[0];
+              if (box && typeof box.x === 'number') {
+                lastFaceBox = box;
+                lastFaceTime = performance.now();
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Face detection error:', err);
+          // If it keeps failing, break out to avoid spamming errors
+          break;
+        }
+        await new Promise(res => setTimeout(res, 400));
+      }
+    }
+
+    async function startCamera() {
+      try {
+        statusMini.textContent = 'REQ CAM';
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        });
+        video.srcObject = stream;
+        await video.play();
+
+        overlay.width = video.videoWidth || 320;
+        overlay.height = video.videoHeight || 240;
+
+        running = true;
+        lastSampleTime = performance.now();
+        armBtn.disabled = true;
+        statusMini.textContent = 'ARMED';
+
+        if (faceDetector) {
+          faceDetectionLoop();
+        }
+
+        requestAnimationFrame(loop);
+      } catch (err) {
+        console.error(err);
+        statusMini.textContent = 'ERR';
+      }
+    }
+
+    function loop() {
+      if (!running) return;
+      const now = performance.now();
+      if (video.readyState >= 2 && now - lastSampleTime >= 1000 / fs) {
+        lastSampleTime = now;
+        const vw = video.videoWidth || overlay.width;
+        const vh = video.videoHeight || overlay.height;
+
+        const roi = getROI(vw, vh);
+        drawHeartOverlay(roi);
+
+        const gMean = extractGreenMean(roi);
+        signal.push(gMean);
+        if (signal.length > bufferLength) signal.shift();
+
+        const { bpm, qual } = estimateBPMAndQuality(signal);
+        updateBpmDisplay(bpm, qual);
+      }
+      requestAnimationFrame(loop);
+    }
+
+    armBtn.addEventListener('click', startCamera);
+  </script>
+</body>
+</html>
