@@ -443,6 +443,20 @@
       octx.restore();
     }
 
+    // Simple RGB-based skin detector (approximation)
+    // Inspired by classic skin heuristics (e.g., Kovac et al.)
+    function isSkinPixel(r, g, b) {
+      const maxVal = Math.max(r, g, b);
+      const minVal = Math.min(r, g, b);
+
+      const cond1 = r > 95 && g > 40 && b > 20;
+      const cond2 = maxVal - minVal > 15;
+      const cond3 = Math.abs(r - g) > 15;
+      const cond4 = r > g && r > b;
+
+      return cond1 && cond2 && cond3 && cond4;
+    }
+
     function extractGreenMean(roi) {
       const c = document.createElement('canvas');
       c.width = video.videoWidth || 320;
@@ -451,12 +465,30 @@
       ctx.drawImage(video, 0, 0, c.width, c.height);
       const img = ctx.getImageData(roi.x, roi.y, roi.w, roi.h);
       const data = img.data;
-      let sum = 0;
-      let count = data.length / 4;
+
+      let skinSum = 0;
+      let skinCount = 0;
+      let totalSum = 0;
+      let totalCount = data.length / 4;
+
       for (let i = 0; i < data.length; i += 4) {
-        sum += data[i + 1];
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+
+        totalSum += g;
+
+        if (isSkinPixel(r, g, b)) {
+          skinSum += g;
+          skinCount++;
+        }
       }
-      return sum / count;
+
+      if (skinCount > 0) {
+        return skinSum / skinCount;
+      }
+      // Fallback if no skin pixels detected (avoid NaN, still get something)
+      return totalSum / totalCount;
     }
 
     function detrend(data) {
