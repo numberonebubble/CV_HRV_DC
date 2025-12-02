@@ -45,10 +45,10 @@
       position: absolute;
       inset: 0;
       background-image:
-        linear-gradient(rgba(15,118,178,0.2) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(15,118,178,0.2) 1px, transparent 1px);
+        linear-gradient(rgba(15,118,178,0.18) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(15,118,178,0.18) 1px, transparent 1px);
       background-size: 24px 24px;
-      opacity: 0.4;
+      opacity: 0.35;
       pointer-events: none;
     }
 
@@ -58,7 +58,7 @@
       padding: 10px 12px 12px;
     }
 
-    /* top bar: minimal */
+    /* top bar, minimal */
     #top-bar {
       display: flex;
       justify-content: space-between;
@@ -318,58 +318,92 @@
     let running = false;
     let lastSampleTime = 0;
 
-    function getROI(w, h) {
-      const roiW = w * 0.38;
-      const roiH = h * 0.24;
+    // Face detection state
+    const faceDetector = ('FaceDetector' in window) ? new FaceDetector({ fastMode: true, maxDetectedFaces: 1 }) : null;
+    let lastFaceBox = null;
+    let lastFaceTime = 0;
+
+    // BPM smoothing
+    const bpmHistory = [];
+    const maxBpmHistory = 5;
+
+    function clamp(val, min, max) {
+      return Math.max(min, Math.min(max, val));
+    }
+
+    function computeROIFromFace(w, h) {
+      if (!lastFaceBox) return null;
+      const ageMs = performance.now() - lastFaceTime;
+      if (ageMs > 2000) return null; // stale
+
+      const box = lastFaceBox;
+      let fx = box.x;
+      let fy = box.y;
+      let fw = box.width;
+      let fh = box.height;
+
+      // Forehead region: top portion of face box
+      let roiW = fw * 0.5;
+      let roiH = fh * 0.25;
+      let x = fx + (fw - roiW) / 2;
+      let y = fy + fh * 0.05;
+
+      // Clamp to frame
+      x = clamp(x, 0, w - 1);
+      y = clamp(y, 0, h - 1);
+      roiW = clamp(roiW, 10, w - x);
+      roiH = clamp(roiH, 10, h - y);
+
+      // Integers for getImageData
       return {
-        x: (w - roiW) / 2,
-        y: h * 0.18,
-        w: roiW,
-        h: roiH
+        x: Math.round(x),
+        y: Math.round(y),
+        w: Math.round(roiW),
+        h: Math.round(roiH)
       };
     }
 
-    function drawHUDOverlay(roi, vw, vh) {
+    function computeFallbackROI(w, h) {
+      const roiW = w * 0.38;
+      const roiH = h * 0.24;
+      let x = (w - roiW) / 2;
+      let y = h * 0.18;
+      return {
+        x: Math.round(clamp(x, 0, w - 1)),
+        y: Math.round(clamp(y, 0, h - 1)),
+        w: Math.round(clamp(roiW, 10, w - x)),
+        h: Math.round(clamp(roiH, 10, h - y))
+      };
+    }
+
+    function getROI(w, h) {
+      const faceROI = computeROIFromFace(w, h);
+      return faceROI || computeFallbackROI(w, h);
+    }
+
+    function drawHeartOverlay(roi) {
       octx.clearRect(0, 0, overlay.width, overlay.height);
 
-      // forehead box
-      octx.strokeStyle = '#38bdf8';
-      octx.lineWidth = 2;
+      const cx = roi.x + roi.w / 2;
+      const cy = roi.y + roi.h / 2;
+
+      // subtle dashed rectangle
+      octx.strokeStyle = 'rgba(56,189,248,0.75)';
+      octx.lineWidth = 1.5;
       octx.setLineDash([6, 4]);
       octx.strokeRect(roi.x, roi.y, roi.w, roi.h);
       octx.setLineDash([]);
 
-      // central reticle
-      const cx = vw / 2;
-      const cy = vh * 0.45;
-      octx.strokeStyle = 'rgba(56,189,248,0.85)';
-      octx.lineWidth = 1.3;
-
-      // circle
-      octx.beginPath();
-      octx.arc(cx, cy, 28, 0, Math.PI * 2);
-      octx.stroke();
-
-      // crosshair
-      octx.beginPath();
-      octx.moveTo(cx - 20, cy);
-      octx.lineTo(cx + 20, cy);
-      octx.moveTo(cx, cy - 20);
-      octx.lineTo(cx, cy + 20);
-      octx.stroke();
-
-      // outer hex-style ring
-      const r = 44;
-      octx.beginPath();
-      for (let i = 0; i < 6; i++) {
-        const angle = (Math.PI / 3) * i - Math.PI / 2;
-        const x = cx + r * Math.cos(angle);
-        const y = cy + r * Math.sin(angle);
-        if (i === 0) octx.moveTo(x, y);
-        else octx.lineTo(x, y);
-      }
-      octx.closePath();
-      octx.stroke();
+      // glowing heart in center of ROI
+      octx.save();
+      octx.font = '24px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      octx.textAlign = 'center';
+      octx.textBaseline = 'middle';
+      octx.fillStyle = '#38bdf8';
+      octx.shadowColor = 'rgba(56,189,248,0.9)';
+      octx.shadowBlur = 10;
+      octx.fillText('♥', cx, cy);
+      octx.restore();
     }
 
     function extractGreenMean(roi) {
@@ -462,11 +496,52 @@
       return { bpm, qual };
     }
 
+    function updateBpmDisplay(bpm, qual) {
+      if (!bpm || bpm <= 30 || bpm >= 220 || qual < 0.3) {
+        hrValueEl.textContent = '--';
+        sigBar.style.width = '10%';
+        statusMini.textContent = 'SCAN';
+        return;
+      }
+
+      bpmHistory.push(bpm);
+      if (bpmHistory.length > maxBpmHistory) bpmHistory.shift();
+      const avgBpm = bpmHistory.reduce((a, b) => a + b, 0) / bpmHistory.length;
+
+      hrValueEl.textContent = avgBpm.toFixed(0);
+      const widthPct = 10 + Math.round(qual * 90);
+      sigBar.style.width = widthPct + '%';
+      statusMini.textContent = 'LOCK';
+    }
+
+    async function faceDetectionLoop() {
+      if (!faceDetector) return;
+      while (running) {
+        try {
+          if (video.readyState >= 2) {
+            const faces = await faceDetector.detect(video);
+            if (faces && faces.length > 0) {
+              const box = faces[0].boundingBox || faces[0];
+              if (box && typeof box.x === 'number') {
+                lastFaceBox = box;
+                lastFaceTime = performance.now();
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Face detection error:', err);
+          // If it keeps failing, break out to avoid spamming errors
+          break;
+        }
+        await new Promise(res => setTimeout(res, 400));
+      }
+    }
+
     async function startCamera() {
       try {
-        statusMini.textContent = "REQ CAM";
+        statusMini.textContent = 'REQ CAM';
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
           audio: false
         });
         video.srcObject = stream;
@@ -478,11 +553,16 @@
         running = true;
         lastSampleTime = performance.now();
         armBtn.disabled = true;
-        statusMini.textContent = "ARMED";
+        statusMini.textContent = 'ARMED';
+
+        if (faceDetector) {
+          faceDetectionLoop();
+        }
+
         requestAnimationFrame(loop);
       } catch (err) {
         console.error(err);
-        statusMini.textContent = "ERR";
+        statusMini.textContent = 'ERR';
       }
     }
 
@@ -495,24 +575,14 @@
         const vh = video.videoHeight || overlay.height;
 
         const roi = getROI(vw, vh);
-        drawHUDOverlay(roi, vw, vh);
+        drawHeartOverlay(roi);
 
         const gMean = extractGreenMean(roi);
         signal.push(gMean);
         if (signal.length > bufferLength) signal.shift();
 
         const { bpm, qual } = estimateBPMAndQuality(signal);
-
-        if (bpm && bpm > 30 && bpm < 220) {
-          hrValueEl.textContent = bpm.toFixed(0);
-          const widthPct = 10 + Math.round(qual * 90);
-          sigBar.style.width = widthPct + "%";
-          statusMini.textContent = "LOCK";
-        } else {
-          hrValueEl.textContent = "--";
-          sigBar.style.width = "10%";
-          statusMini.textContent = "SCAN";
-        }
+        updateBpmDisplay(bpm, qual);
       }
       requestAnimationFrame(loop);
     }
@@ -521,3 +591,4 @@
   </script>
 </body>
 </html>
+
