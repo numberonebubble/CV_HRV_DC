@@ -58,7 +58,7 @@
       padding: 10px 12px 12px;
     }
 
-    /* top bar, minimal */
+    /* top bar */
     #top-bar {
       display: flex;
       justify-content: space-between;
@@ -418,33 +418,7 @@
       return faceROI || computeFallbackROI(w, h);
     }
 
-    function drawHeartOverlay(roi) {
-      octx.clearRect(0, 0, overlay.width, overlay.height);
-
-      const cx = roi.x + roi.w / 2;
-      const cy = roi.y + roi.h / 2;
-
-      // subtle dashed rectangle
-      octx.strokeStyle = 'rgba(56,189,248,0.75)';
-      octx.lineWidth = 1.5;
-      octx.setLineDash([6, 4]);
-      octx.strokeRect(roi.x, roi.y, roi.w, roi.h);
-      octx.setLineDash([]);
-
-      // glowing heart in center of ROI
-      octx.save();
-      octx.font = '24px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-      octx.textAlign = 'center';
-      octx.textBaseline = 'middle';
-      octx.fillStyle = '#38bdf8';
-      octx.shadowColor = 'rgba(56,189,248,0.9)';
-      octx.shadowBlur = 10;
-      octx.fillText('♥', cx, cy);
-      octx.restore();
-    }
-
     // Simple RGB-based skin detector (approximation)
-    // Inspired by classic skin heuristics (e.g., Kovac et al.)
     function isSkinPixel(r, g, b) {
       const maxVal = Math.max(r, g, b);
       const minVal = Math.min(r, g, b);
@@ -457,7 +431,9 @@
       return cond1 && cond2 && cond3 && cond4;
     }
 
-    function extractGreenMean(roi) {
+    // Analyze ROI: compute skin-filtered mean green AND draw overlay mask+heart
+    function analyzeRoiAndDraw(roi) {
+      // Offscreen capture of the video frame in ROI space
       const c = document.createElement('canvas');
       c.width = video.videoWidth || 320;
       c.height = video.videoHeight || 240;
@@ -469,7 +445,11 @@
       let skinSum = 0;
       let skinCount = 0;
       let totalSum = 0;
-      let totalCount = data.length / 4;
+      const totalCount = data.length / 4;
+
+      // Create a mask image for the overlay
+      const mask = octx.createImageData(roi.w, roi.h);
+      const mData = mask.data;
 
       for (let i = 0; i < data.length; i += 4) {
         const r = data[i];
@@ -478,17 +458,54 @@
 
         totalSum += g;
 
-        if (isSkinPixel(r, g, b)) {
+        const isSkin = isSkinPixel(r, g, b);
+        if (isSkin) {
           skinSum += g;
           skinCount++;
+
+          // green-tinted mask pixel
+          mData[i + 0] = 16;   // R
+          mData[i + 1] = 240;  // G
+          mData[i + 2] = 160;  // B
+          mData[i + 3] = 70;   // alpha
+        } else {
+          // transparent
+          mData[i + 0] = 0;
+          mData[i + 1] = 0;
+          mData[i + 2] = 0;
+          mData[i + 3] = 0;
         }
       }
 
-      if (skinCount > 0) {
-        return skinSum / skinCount;
-      }
-      // Fallback if no skin pixels detected (avoid NaN, still get something)
-      return totalSum / totalCount;
+      const meanGreen = skinCount > 0 ? (skinSum / skinCount) : (totalSum / totalCount);
+
+      // Draw overlay: ROI box, mask, and heart
+      octx.clearRect(0, 0, overlay.width, overlay.height);
+
+      // skin mask (our person in green)
+      octx.putImageData(mask, roi.x, roi.y);
+
+      // dashed ROI rectangle
+      octx.strokeStyle = 'rgba(56,189,248,0.85)';
+      octx.lineWidth = 1.5;
+      octx.setLineDash([6, 4]);
+      octx.strokeRect(roi.x, roi.y, roi.w, roi.h);
+      octx.setLineDash([]);
+
+      // heart glyph in center
+      const cx = roi.x + roi.w / 2;
+      const cy = roi.y + roi.h / 2;
+      octx.save();
+      octx.font = '24px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      octx.textAlign = 'center';
+      octx.textBaseline = 'middle';
+      octx.fillStyle = '#38bdf8';
+      octx.shadowColor = 'rgba(56,189,248,0.9)';
+      octx.shadowBlur = 10;
+      octx.fillText('♥', cx, cy);
+      octx.restore();
+
+      return meanGreen;
     }
 
     function detrend(data) {
@@ -682,9 +699,8 @@
         const vh = video.videoHeight || overlay.height;
 
         const roi = getROI(vw, vh);
-        drawHeartOverlay(roi);
+        const gMean = analyzeRoiAndDraw(roi);
 
-        const gMean = extractGreenMean(roi);
         signal.push(gMean);
         if (signal.length > bufferLength) signal.shift();
 
@@ -699,4 +715,3 @@
   </script>
 </body>
 </html>
-
